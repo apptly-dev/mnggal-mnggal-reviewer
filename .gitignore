@@ -1,0 +1,5 @@
+# Never commit the App private key — it lives on the runner, not in git.
+*.pem
+
+# Local scratch for commit / tag message drafts.
+.tmp/

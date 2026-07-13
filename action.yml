@@ -1,0 +1,74 @@
+# mnggal-mnggal reviewer — a composite action wrapping open-code-review with
+# the compute3/Ollama backend and the mnggal-mnggal GitHub App identity both
+# preconfigured. Callers pass nothing: they just run it on the runner1 label.
+#
+# The App private key lives on the runner1 guest (see key_path); this action
+# therefore only runs there, which is where the reviewer runs anyway.
+name: mnggal-mnggal reviewer
+description: >-
+  Local-LLM pull-request reviewer. Runs open-code-review on the self-hosted
+  runner1 against compute3's Ollama endpoint, posting under the mnggal-mnggal
+  GitHub App.
+author: apptly-dev
+
+inputs:
+  # --- compute3 wiring (preconfigured; override only for a different backend) ---
+  llm_url:
+    description: Ollama OpenAI-compatible endpoint (the /v1 suffix is required).
+    default: http://compute3.lan:11434/v1
+  llm_model:
+    description: Model served by Ollama on compute3.
+    default: qwen3-coder:30b
+  llm_use_anthropic:
+    description: "'false' selects the OpenAI-compatible surface."
+    default: 'false'
+  llm_auth_token:
+    description: Dummy token; a bare Ollama ignores it.
+    default: ollama
+  ocr_version:
+    description: Pinned open-code-review npm version.
+    default: 1.7.8
+
+  # --- identity (the mnggal-mnggal GitHub App, keyed from the runner) ---
+  app_id:
+    description: mnggal-mnggal GitHub App ID (not secret).
+    default: '4290632'
+  key_path:
+    description: Path to the mnggal-mnggal App private key (PEM) on the runner.
+    default: /etc/mnggal-mnggal-reviewer/app.pem
+
+runs:
+  using: composite
+  steps:
+    - name: Load the mnggal-mnggal App key from the runner
+      id: key
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -r "${{ inputs.key_path }}" || {
+          echo "::error::App key not readable at ${{ inputs.key_path }}" >&2
+          exit 1
+        }
+        # PEM goes to the step output (never echoed to the log) for the next step.
+        {
+          echo 'pem<<PEM_EOF'
+          cat "${{ inputs.key_path }}"
+          echo 'PEM_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Mint the mnggal-mnggal App token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ inputs.app_id }}
+        private-key: ${{ steps.key.outputs.pem }}
+
+    - name: Review against compute3 (Ollama, OpenAI-compatible)
+      uses: alibaba/open-code-review@v1.7.8
+      with:
+        llm_url: ${{ inputs.llm_url }}
+        llm_model: ${{ inputs.llm_model }}
+        llm_use_anthropic: ${{ inputs.llm_use_anthropic }}
+        llm_auth_token: ${{ inputs.llm_auth_token }}
+        ocr_version: ${{ inputs.ocr_version }}
+        github_token: ${{ steps.app-token.outputs.token }}
